@@ -29,15 +29,25 @@ if [ ! -d "${OUTDIR}/linux-stable" ]; then
 	echo "CLONING GIT LINUX STABLE VERSION ${KERNEL_VERSION} IN ${OUTDIR}"
 	git clone ${KERNEL_REPO} --depth 1 --single-branch --branch ${KERNEL_VERSION}
 fi
+
 if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     cd linux-stable
     echo "Checking out version ${KERNEL_VERSION}"
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
+    echo "Building kernel ${KERNEL_VERSION} for ${ARCH}"
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j4 all
+    # make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
+
+    cd "$OUTDIR"
 fi
 
 echo "Adding the Image in outdir"
+cp "${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image" "${OUTDIR}"
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -48,6 +58,8 @@ then
 fi
 
 # TODO: Create necessary base directories
+echo "Creating base directories in ${OUTDIR}/rootfs"
+mkdir -p ${OUTDIR}/rootfs/{bin,home,lib,lib64,dev,etc,proc,sys,usr/{bin,lib,sbin},var/{log}}
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
@@ -56,25 +68,55 @@ git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # TODO:  Configure busybox
+    make distclean
+    make defconfig
 else
     cd busybox
 fi
 
 # TODO: Make and install busybox
+echo "Building busybox ${BUSYBOX_VERSION} for ${ARCH}"
+make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j4
+make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install CONFIG_PREFIX=${OUTDIR}/rootfs
 
 echo "Library dependencies"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+echo "Copying library dependencies to rootfs"
+SYSROOT=$(${CROSS_COMPILE}gcc --print-sysroot)
+cp "${SYSROOT}/lib/ld-linux-aarch64.so.1" "${OUTDIR}/rootfs/lib"
+cp "${SYSROOT}/lib64/libm.so.6" "${OUTDIR}/rootfs/lib64"
+cp "${SYSROOT}/lib64/libresolv.so.2" "${OUTDIR}/rootfs/lib64"
+cp "${SYSROOT}/lib64/libc.so.6" "${OUTDIR}/rootfs/lib64"
 
 # TODO: Make device nodes
+echo "Creating device nodes in ${OUTDIR}/rootfs/dev"
+sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
+sudo mknod -m 622 ${OUTDIR}/rootfs/dev/console c 5 1
 
 # TODO: Clean and build the writer utility
+echo "Building the writer utility"
+cd "$FINDER_APP_DIR"
+make clean
+make CROSS_COMPILE=${CROSS_COMPILE}
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
+echo "Copying finder related files to ${OUTDIR}/rootfs/home"
+mkdir -p ${OUTDIR}/rootfs/home
+cp "autorun-qemu.sh" "finder-test.sh" "finder.sh" "writer" "writer.sh" "${OUTDIR}/rootfs/home"
+mkdir "${OUTDIR}/rootfs/conf/"
+cp -r "../conf" "${OUTDIR}/rootfs"
+mkdir "${OUTDIR}/rootfs/home/conf"
+cp "conf/username.txt" "conf/assignment.txt" "${OUTDIR}/rootfs/home/conf"
 
 # TODO: Chown the root directory
+echo "Changing ownership of ${OUTDIR}/rootfs to root"
+sudo chown -R root:root ${OUTDIR}/rootfs
 
 # TODO: Create initramfs.cpio.gz
+echo "Creating initramfs.cpio.gz"
+cd ${OUTDIR}/rootfs
+find . | cpio -H newc -o | gzip > ${OUTDIR}/initramfs.cpio.gz
