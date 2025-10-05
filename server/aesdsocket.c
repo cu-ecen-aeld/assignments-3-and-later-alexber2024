@@ -86,7 +86,7 @@ int listen_socket(int sockfd) {
             syslog(LOG_ERR, "Failed to open %s", DATAFILE);
             close(clientfd);
             global_clientfd = -1;
-            continue;
+            goto next_client;
         }
 
         size_t bufsize = 1024;
@@ -96,7 +96,7 @@ int listen_socket(int sockfd) {
             fclose(fp);
             close(clientfd);
             global_clientfd = -1;
-            continue;
+            goto next_client;
         }
         size_t datalen = 0;
         ssize_t n;
@@ -138,10 +138,10 @@ int listen_socket(int sockfd) {
                         FILE *fp2 = fopen(DATAFILE, "r");
                         if (!fp2) {
                             syslog(LOG_ERR, "Failed to open %s for reading", DATAFILE);
-                            close(clientfd);
-                            global_clientfd = -1;
                             free(recvbuf);
                             fclose(fp);
+                            close(clientfd);
+                            global_clientfd = -1;
                             goto next_client;
                         }
                         char sendbuf[1024];
